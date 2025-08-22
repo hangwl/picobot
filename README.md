@@ -15,6 +15,7 @@ Microcontroller
 - Raspberry Pi Pico W (or any other microcontroller device that supports CircuitPython)
   - CircuitPython
   - Adafruit HID library
+  - code.py
 ```
 
 Python + Package Dependencies on your Computer
