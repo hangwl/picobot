@@ -23,7 +23,6 @@ Python + Package Dependencies on your Computer
 ```
 - keyboard
 - pygetwindow
-- serial
 - pyserial
 ```
 
