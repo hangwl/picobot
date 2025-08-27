@@ -16,6 +16,7 @@ Microcontroller
   - CircuitPython
   - Adafruit HID library
   - code.py
+  - boot.py
 ```
 
 Python + Package Dependencies on your Computer
@@ -28,18 +29,9 @@ Python + Package Dependencies on your Computer
 
 ## Usage Guide
 
-Make sure to run the scripts in administrator mode. 
-
-1. Record the macros you need using the `macro_recorder.py` script. 
-2. Run `picobot.py`, configure your settings and click the START button to start the macro loop. 
-3. The loop cycles through available macro.txt files in your configured macro folder. 
-4. Click the STOP button to stop the loop. 
-
-### WIP
-
-Currently picobot does not detect whether or not the active window has changed. 
-Please be careful to stop the bot before switching windows. 
-Clicking the STOP button should reliably stop macro loops. 
-You may use the hardcoded keyboard PAUSE button to start/stop the loops but they are unreliable. 
-
-  
+- Make sure to run the scripts in administrator mode. 
+- Each macro loop cycles through available macro.txt files in a randomized sequence in the selected macro folder. 
+- If a macro file is prefixed with "START_", it will always be the first to play in a macro sequence. 
+- Record the macros you need using the `macro_recorder.py` script. 
+- Run `picobot.py`, configure your settings and click the START button to start a macro loop from a selected macro folder.
+- Clicking the STOP button should reliably stop a loop. If the active window changes, the macro loop should also stop. 
