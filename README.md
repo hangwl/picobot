@@ -34,4 +34,4 @@ Python + Package Dependencies on your Computer
 - If a macro file is prefixed with "START_", it will always be the first to play in a macro sequence. 
 - Record the macros you need using the `macro_recorder.py` script. 
 - Run `picobot.py`, configure your settings and click the START button to start a macro loop from a selected macro folder.
-- Clicking the STOP button should reliably stop a loop. If the active window changes, the macro loop should also stop. 
+- To stop the macro, simply tab out of the target active window. A detection system is in place to stop the macro on active window change. 
