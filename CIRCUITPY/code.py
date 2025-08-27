@@ -1,8 +1,13 @@
-import sys
-import supervisor
+import time
 import usb_hid
+import usb_cdc
 from adafruit_hid.keyboard import Keyboard
 from adafruit_hid.keycode import Keycode
+
+# Add a delay to give the USB host time to get ready.
+# This helps prevent a race condition on startup.
+time.sleep(1)
+
 
 # A comprehensive mapping from the string names used by the 'keyboard' library
 # to the Keycode objects that CircuitPython's HID library understands.
@@ -79,28 +84,87 @@ except Exception as e:
     print(f"Error initializing HID Keyboard: {e}")
     while True: pass
 
+# Track DATA serial connection state to re-emit readiness on new connections
+data_was_connected = usb_cdc.data.connected
+# Buffer for assembling newline-terminated commands from DATA port
+rx_buffer = b""
+# Periodic PICO_READY re-emit control
+last_ready_sent = 0.0
+commands_seen = False
+
 # --- Main Loop ---
 while True:
-    # Check if there's any data waiting in the USB serial buffer.
-    if supervisor.runtime.serial_bytes_available:
-        # Read all available bytes at once.
-        data = sys.stdin.read(supervisor.runtime.serial_bytes_available)
-        # The last command might be incomplete, so we look for the last full line.
-        lines = data.strip().split('\n')
-        if lines:
-            # Get the very last complete command received.
-            last_command = lines[-1]
-            print(f"Processing last command: '{last_command}'")
-            try:
-                command, key_str = last_command.split('|', 1)
-                key_to_act = KEY_MAP.get(key_str.lower())
+    # Emit PICO_READY on new DATA port connection
+    now_connected = usb_cdc.data.connected
+    if now_connected and not data_was_connected:
+        try:
+            usb_cdc.data.write(b"PICO_READY\n")
+            print("[console] DATA connected; sent PICO_READY on DATA")
+            last_ready_sent = time.monotonic()
+            commands_seen = False
+        except Exception:
+            pass
+    elif (not now_connected) and data_was_connected:
+        print("[console] DATA disconnected")
+    data_was_connected = now_connected
 
-                if key_to_act:
-                    if command == "down":
-                        keyboard.press(key_to_act)
-                    elif command == "up":
-                        keyboard.release(key_to_act)
-                else:
-                    print(f"Warning: Key '{key_str}' not found in KEY_MAP.")
-            except (ValueError, IndexError) as e:
-                print(f"Could not parse command: '{last_command}'. Error: {e}")
+    # If still connected but host hasn't sent any command yet, periodically re-emit PICO_READY
+    if now_connected and not commands_seen:
+        if (time.monotonic() - last_ready_sent) >= 1.0:
+            try:
+                usb_cdc.data.write(b"PICO_READY\n")
+                last_ready_sent = time.monotonic()
+            except Exception:
+                pass
+
+    # Check if there's any data waiting in the DATA USB serial buffer.
+    if usb_cdc.data.in_waiting > 0:
+        # Read available bytes and append to buffer
+        try:
+            chunk = usb_cdc.data.read(usb_cdc.data.in_waiting)
+        except Exception:
+            chunk = None
+        if chunk:
+            rx_buffer += chunk
+
+        # Process any complete lines
+        while b"\n" in rx_buffer:
+            line, rx_buffer = rx_buffer.split(b"\n", 1)
+            command_line = line.decode("utf-8").strip()
+
+            if command_line:
+                # print(f"Processing: '{command_line}'") # Optional: for debugging
+                try:
+                    command, key_str = command_line.split('|', 1)
+                    cmd = command.strip().lower()
+                    key_name = key_str.strip().lower()
+
+                    # Explicit handshake: respond to HELLO from host on DATA port
+                    if cmd == "hello":
+                        try:
+                            usb_cdc.data.write(b"PICO_READY\n")
+                            commands_seen = True
+                        except Exception:
+                            pass
+                        continue
+
+                    key_to_act = KEY_MAP.get(key_name)
+
+                    if key_to_act:
+                        if cmd == "down":
+                            keyboard.press(key_to_act)
+                        elif cmd == "up":
+                            keyboard.release(key_to_act)
+                    else:
+                        print(f"Warning: Key '{key_str}' not found in KEY_MAP.")
+
+                    commands_seen = True
+                    # After processing, send an acknowledgement back to the host over DATA port.
+                    try:
+                        usb_cdc.data.write(b"ACK\n")
+                    except Exception:
+                        pass
+
+                except (ValueError, IndexError) as e:
+                    print(f"Could not parse command: '{command_line}'. Error: {e}")
+    time.sleep(0.01)
