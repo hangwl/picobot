@@ -4,7 +4,6 @@ import pygetwindow as gw
 import time
 import serial
 import serial.tools.list_ports
-import keyboard
 import threading
 import os
 import random
@@ -55,23 +54,30 @@ class MacroControllerApp:
         self.macro_label = tk.Label(self.macro_frame, textvariable=self.macro_folder_path, anchor="w")
         self.macro_label.pack(side=tk.LEFT, fill="x", expand=True)
 
-        # --- NEW: Control Buttons ---
+        # --- Options ---
+        self.pin_var = tk.BooleanVar(value=True)
+        self.pin_check = tk.Checkbutton(root, text="Pin window (always on top)", variable=self.pin_var, command=self.toggle_always_on_top)
+        self.pin_check.pack(padx=10, anchor="w")
+        # Default to always-on-top on first launch; load_config may override
+        try:
+            self.root.attributes("-topmost", True)
+        except Exception:
+            pass
+
+        # --- Controls ---
         self.control_frame = tk.Frame(root)
         self.control_frame.pack(padx=10, pady=5, fill="x")
         self.start_button = tk.Button(self.control_frame, text="START", command=self.start_macro, font=("Helvetica", 12, "bold"), bg="#4CAF50", fg="white", state=tk.NORMAL)
-        self.start_button.pack(side=tk.LEFT, fill="x", expand=True, padx=(0, 5))
-        self.stop_button = tk.Button(self.control_frame, text="STOP", command=self.stop_macro, font=("Helvetica", 12, "bold"), bg="#F44336", fg="white", state=tk.DISABLED)
-        self.stop_button.pack(side=tk.RIGHT, fill="x", expand=True, padx=(5, 0))
+        self.start_button.pack(side=tk.LEFT, fill="x", expand=True)
 
         # --- Status Bar ---
-        self.status_text = tk.StringVar(value="Status: Idle. Use buttons or 'Pause' key to start/stop.")
+        self.status_text = tk.StringVar(value="Status: Idle. Click START to begin. Switch windows to stop.")
         self.status_bar = tk.Label(root, textvariable=self.status_text, relief=tk.SUNKEN, anchor="w", padx=5)
         self.status_bar.pack(side=tk.BOTTOM, fill="x")
 
         # --- Initial Setup ---
         self.load_config()
         self.refresh_windows() # Refresh windows after loading config
-        self.setup_hotkey()
 
     def load_config(self):
         try:
@@ -80,6 +86,13 @@ class MacroControllerApp:
                     config = json.load(f)
                     self.selected_window.set(config.get("last_window", ""))
                     self.macro_folder_path.set(config.get("last_folder", "No folder selected."))
+                    # Apply always-on-top preference
+                    aot = config.get("always_on_top", True)
+                    self.pin_var.set(aot)
+                    try:
+                        self.root.attributes("-topmost", bool(aot))
+                    except Exception:
+                        pass
                     print("Configuration loaded.")
         except Exception as e:
             print(f"Could not load config file: {e}")
@@ -87,7 +100,8 @@ class MacroControllerApp:
     def save_config(self, event=None):
         config = {
             "last_window": self.selected_window.get(),
-            "last_folder": self.macro_folder_path.get()
+            "last_folder": self.macro_folder_path.get(),
+            "always_on_top": bool(self.pin_var.get()),
         }
         try:
             with open(CONFIG_FILE, 'w') as f:
@@ -96,20 +110,19 @@ class MacroControllerApp:
         except Exception as e:
             print(f"Could not save config file: {e}")
 
-    def setup_hotkey(self):
-        keyboard.add_hotkey('pause', self.toggle_macro, suppress=True)
+    def toggle_always_on_top(self):
+        try:
+            self.root.attributes("-topmost", bool(self.pin_var.get()))
+        except Exception as e:
+            print(f"Could not set always-on-top: {e}")
+        # Persist preference
+        self.save_config()
 
     def select_macro_folder(self):
         folderpath = filedialog.askdirectory(title="Select Folder Containing Macros")
         if folderpath:
             self.macro_folder_path.set(folderpath)
             self.save_config()
-
-    def toggle_macro(self):
-        if self.is_playing:
-            self.stop_macro()
-        else:
-            self.start_macro()
 
     def start_macro(self):
         if self.is_playing:
@@ -133,17 +146,9 @@ class MacroControllerApp:
 
         print("Starting macro loop...")
         self.start_button.config(state=tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL)
         self.macro_thread = threading.Thread(target=self.play_macro_thread, args=(port, window_title, macro_folder))
         self.macro_thread.daemon = True
         self.macro_thread.start()
-
-    def stop_macro(self):
-        if not self.is_playing:
-            return
-        print("Stopping macro loop signal sent...")
-        self.is_playing = False
-        self.status_text.set("Status: Stopping...")
 
     def interruptible_sleep(self, duration):
         end_time = time.time() + duration
@@ -224,12 +229,15 @@ class MacroControllerApp:
             target_windows = gw.getWindowsWithTitle(window_title)
             if not target_windows:
                 print(f"Error: Target window '{window_title}' not found.")
-                self.stop_macro()
+                self.is_playing = False
+                # Ensure GUI resets cleanly
+                self.root.after(0, self.on_macro_thread_exit)
                 return
             target_windows[0].activate()
         except Exception as e:
             print(f"Error activating window: {e}")
-            self.stop_macro()
+            self.is_playing = False
+            self.root.after(0, self.on_macro_thread_exit)
             return
         
         time.sleep(1)
@@ -446,7 +454,6 @@ class MacroControllerApp:
         self.is_playing = False # Ensure state is final
         self.status_text.set("Status: Stopped. Ready to start.")
         self.start_button.config(state=tk.NORMAL)
-        self.stop_button.config(state=tk.DISABLED)
         print("GUI updated. Macro has fully stopped.")
 
     def parse_macro_file(self, filename):
