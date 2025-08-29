@@ -158,6 +158,49 @@ class MacroControllerApp:
             time.sleep(0.01)
         return True
 
+    def _finalize_handshake(self, ser):
+        """After seeing PICO_READY, explicitly send HELLO so the Pico stops periodic READY.
+        Then wait briefly for its PICO_READY response and clear any leftover input.
+        """
+        try:
+            ser.write(b"hello|handshake\n")
+            ser.flush()
+        except Exception:
+            pass
+        end = time.time() + 0.8
+        while time.time() < end:
+            try:
+                line = ser.readline().decode('utf-8', errors='ignore').strip()
+            except Exception:
+                break
+            if not line:
+                continue
+            if line == "PICO_READY":
+                break
+        # Clear any stray bytes (e.g., a periodic PICO_READY that raced in)
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+
+    def _wait_for_ack(self, ser, timeout=1.5):
+        """Wait for an ACK line, ignoring blank lines and stray PICO_READY messages."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                line = ser.readline().decode('utf-8', errors='ignore').strip()
+            except Exception:
+                return False
+            if not line:
+                continue
+            if line == "ACK":
+                return True
+            if line == "PICO_READY":
+                # Ignore and keep waiting for the ACK corresponding to our command
+                continue
+            # Unexpected noise; ignore and continue until timeout
+        return False
+
     def find_data_port(self, exclude_port=None):
         """Scan COM ports to find the Pico DATA CDC port by eliciting PICO_READY.
         Returns the port string if found, else None.
@@ -304,6 +347,8 @@ class MacroControllerApp:
                         line = ser.readline().decode('utf-8').strip()
                         if line == "PICO_READY":
                             print("PICO_READY signal received. Starting macro.")
+                            # Explicit HELLO to stop Pico's periodic READY and drain buffer
+                            self._finalize_handshake(ser)
                             ready_signal_received = True
                             break
                         elif line:
@@ -356,6 +401,8 @@ class MacroControllerApp:
                                     line = ser.readline().decode('utf-8', errors='ignore').strip()
                                     if line == "PICO_READY":
                                         print("PICO_READY signal received. Starting macro.")
+                                        # Explicit HELLO to stop Pico's periodic READY and drain buffer
+                                        self._finalize_handshake(ser)
                                         ready_signal_received = True
                                         break
                                     elif line:
@@ -406,14 +453,8 @@ class MacroControllerApp:
                         # Send command and wait for ACK
                         command = f"{event['type']}|{event['key']}\n"
                         ser.write(command.encode('utf-8'))
-                        try:
-                            ack = ser.readline().decode('utf-8').strip()
-                            if ack != "ACK":
-                                print(f"Warning: Expected ACK, got '{ack}'. Stopping to prevent de-sync.")
-                                self.is_playing = False
-                                break
-                        except serial.SerialTimeoutException:
-                            print("Error: Timeout waiting for ACK from Pico. Stopping.")
+                        if not self._wait_for_ack(ser, timeout=1.5):
+                            print("Warning: Expected ACK but got none/other. Stopping to prevent de-sync.")
                             self.is_playing = False
                             break
 
@@ -427,23 +468,26 @@ class MacroControllerApp:
                     print(f"Serial Error: {e}. Stopping macro.")
                     self.is_playing = False
                 finally:
-                    if ser and self.keys_currently_down:
-                        print("Releasing stuck keys...")
-                        for key in list(self.keys_currently_down):
-                            command = f"up|{key}\n"
-                            ser.write(command.encode('utf-8'))
-                            try:
-                                ser.readline() # Wait for ACK
-                                print(f"Sent release for {key} and received ACK.")
-                            except serial.SerialTimeoutException:
-                                print(f"Warning: Timeout on final release ACK for key '{key}'.")
-                        self.keys_currently_down.clear()
-                    if ser:
-                        ser.close()
-
-            # Small delay before starting the next full loop
-            if self.is_playing:
-                time.sleep(1)
+                    # Cleanup per-macro file: release stuck keys and close port
+                    try:
+                        if ser and self.keys_currently_down:
+                            print("Releasing stuck keys...")
+                            for key in list(self.keys_currently_down):
+                                command = f"up|{key}\n"
+                                ser.write(command.encode('utf-8'))
+                                if self._wait_for_ack(ser, timeout=0.8):
+                                    print(f"Sent release for {key} and received ACK.")
+                                else:
+                                    print(f"Warning: Timeout on final release ACK for key '{key}'.")
+                            self.keys_currently_down.clear()
+                    except Exception as e:
+                        print(f"Cleanup error: {e}")
+                    finally:
+                        try:
+                            if ser:
+                                ser.close()
+                        except Exception:
+                            pass
         
         print("Macro thread is finishing.")
         # Schedule the final GUI update on the main thread
