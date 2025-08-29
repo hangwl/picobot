@@ -3,7 +3,7 @@ HID keyboard macro project
 
 ## Disclaimer
 
-This project is purely for educational purposes. 
+This project is purely for learning purposes. 
 Please use the following scripts at your own discretion and adhere to the official TOS agreements in whichever games you are using this macro/bot for. 
 I will not be held liable for any damages or punishments that may come. 
 
