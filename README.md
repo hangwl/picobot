@@ -19,12 +19,13 @@ Microcontroller
   - boot.py
 ```
 
-Python + Package Dependencies on your Computer
+Python Dependencies
 
 ```
 - keyboard
 - pygetwindow
 - pyserial
+- requests
 ```
 
 ## Usage Guide
